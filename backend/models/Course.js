@@ -63,6 +63,10 @@ const videoSchema = new Schema({
   description: {
     type: String,
     required: [true, 'Video description is required']
+  },
+  duration: {
+    type: Number,
+    required: [true, 'Video duration is required']
   }
 });
 
@@ -180,6 +184,32 @@ courseSchema.virtual('averageRating').get(function() {
   if (this.reviews.length === 0) return 0;
   const sum = this.reviews.reduce((total, review) => total + review.rating, 0);
   return (sum / this.reviews.length).toFixed(1);
+});
+
+// Virtual for total video duration
+courseSchema.virtual('totalVideoDuration').get(function() {
+  let totalDuration = 0;
+  this.chapters.forEach(chapter => {
+    chapter.lessons.forEach(lesson => {
+      if (lesson.content.video && lesson.content.video.duration) {
+        totalDuration += lesson.content.video.duration;
+      }
+    });
+  });
+  return totalDuration;
+});
+
+// Virtual for total document count
+courseSchema.virtual('totalDocuments').get(function() {
+  let docCount = 0;
+  this.chapters.forEach(chapter => {
+    chapter.lessons.forEach(lesson => {
+      if (lesson.content.document) {
+        docCount++;
+      }
+    });
+  });
+  return docCount;
 });
 
 // Methods
