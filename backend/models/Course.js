@@ -89,8 +89,14 @@ const chapterSchema = new Schema({
   },
   lessons: {
     type: [{
-      content: contentSchema,
-      quiz: quizSchema
+      content: {
+        type: contentSchema,
+        required: true
+      },
+      quiz: {
+        type: quizSchema,
+        required: true
+      }
     }],
     required: true,
     validate: [arr => arr.length >= 1, 'At least one lesson is required']
@@ -148,7 +154,11 @@ const courseSchema = new Schema({
     type: Schema.Types.ObjectId,
     ref: 'User'
   }],
-  chapters: [chapterSchema],
+  chapters: {
+    type: [chapterSchema],
+    required: true,
+    validate: [arr => arr.length > 0, 'At least one chapter is required']
+  },
   reviews: [reviewSchema]
 }, {
   timestamps: {
@@ -162,6 +172,8 @@ courseSchema.index({ teacher_id: 1 });
 courseSchema.index({ categories: 1 });
 courseSchema.index({ 'reviews.user_id': 1 });
 courseSchema.index({ title: 'text', description: 'text' }); // Text index for search
+courseSchema.index({ price: 1 }); // Index for price
+courseSchema.index({ created_at: 1 }); // Index for created_at
 
 // Virtual for average rating
 courseSchema.virtual('averageRating').get(function() {
