@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const bodyParser = require('body-parser');
+const authRoutes = require('./routes/auth.routes');
+const adminRoutes = require('./routes/admin.routes');
 
 // Load environment variables
 dotenv.config();
@@ -22,6 +24,10 @@ app.get('/', (req, res) => {
 app.get('/api/test', (req, res) => {
   res.json({ message: 'API is working!' });
 });
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
