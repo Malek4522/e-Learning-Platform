@@ -8,6 +8,7 @@ const {
   refreshExpiresIn 
 } = require('../config/jwt.config');
 const crypto = require('crypto');
+const Admin = require('../models/Admin');
 
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
@@ -105,6 +106,34 @@ const authController = {
     try {
       const { email, password } = req.body;
 
+      // First try to find admin
+      const admin = await Admin.findOne({ email }).select('+password');
+      if (admin) {
+        const isMatch = await admin.comparePassword(password);
+        if (!isMatch) {
+          return res.status(401).json({ message: 'Invalid credentials' });
+        }
+
+        const { accessToken, refreshToken } = generateTokens({
+          id: admin._id,
+          role: admin.role,
+          isAdmin: true
+        });
+
+        res.json({
+          accessToken,
+          refreshToken,
+          user: {
+            id: admin._id,
+            email: admin.email,
+            role: admin.role,
+            isAdmin: true
+          }
+        });
+        return;
+      }
+
+      // If not admin, try regular user
       const user = await User.findOne({ email }).select('+password');
       if (!user) {
         return res.status(401).json({ message: 'Invalid credentials' });

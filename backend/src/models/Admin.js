@@ -3,13 +3,6 @@ const bcrypt = require('bcryptjs');
 
 // Define the main admin schema
 const adminSchema = new mongoose.Schema({
-  username: {
-    type: String,
-    required: [true, 'Username is required'],
-    unique: true,
-    trim: true,
-    minlength: [3, 'Username must be at least 3 characters long']
-  },
   password: {
     type: String,
     required: [true, 'Password is required'],
@@ -39,7 +32,6 @@ const adminSchema = new mongoose.Schema({
 
 // Create indexes
 adminSchema.index({ email: 1 });
-adminSchema.index({ username: 1 });
 
 // Hash password before saving
 adminSchema.pre('save', async function(next) {
