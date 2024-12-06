@@ -3,7 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const bodyParser = require('body-parser');
 const connectDB = require('./config/database');
-const routes = require('./routes');
+const routes = require('./routes/index');
 
 // Load environment variables
 dotenv.config();
@@ -22,10 +22,21 @@ app.use(express.static('src/public'));
 // Routes
 app.use('/api', routes);
 
+// Serve static files
+app.use(express.static('src/public'));
+
+// Handle 404
+app.use((req, res) => {
+    res.status(404).json({ message: 'Route not found' });
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error(err.stack);
-    res.status(500).json({ message: 'Something went wrong!' });
+    res.status(500).json({ 
+        message: 'Something went wrong!',
+        error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
 });
 
 // Set port and start server

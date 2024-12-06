@@ -35,6 +35,12 @@ const userSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
+  isEmailVerified: {
+    type: Boolean,
+    default: false
+  },
+  emailVerificationToken: String,
+  emailVerificationExpires: Date,
   password: {
     type: String,
     required: true,
@@ -44,7 +50,8 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true,
     enum: ['student', 'teacher'],
-    default: 'student'
+    default: 'student',
+    immutable: true
   },
   profile: {
     type: profileSchema,
@@ -144,6 +151,28 @@ userSchema.methods.removeRefreshToken = function(refreshToken) {
   this.refreshTokens = this.refreshTokens.filter(token => 
     token.token !== refreshToken
   );
+  return this.save();
+};
+
+// Add method to create email verification token
+userSchema.methods.createEmailVerificationToken = function() {
+  const verificationToken = crypto.randomBytes(32).toString('hex');
+  
+  this.emailVerificationToken = crypto
+    .createHash('sha256')
+    .update(verificationToken)
+    .digest('hex');
+    
+  this.emailVerificationExpires = Date.now() + 24 * 3600000; // 24 hours
+  
+  return verificationToken;
+};
+
+// Add method to verify email
+userSchema.methods.verifyEmail = function() {
+  this.isEmailVerified = true;
+  this.emailVerificationToken = undefined;
+  this.emailVerificationExpires = undefined;
   return this.save();
 };
 

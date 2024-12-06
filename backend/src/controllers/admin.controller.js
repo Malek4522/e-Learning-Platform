@@ -3,6 +3,7 @@ const Course = require('../models/Course');
 const Forum = require('../models/Forum');
 const Progress = require('../models/Progress');
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 exports.getUsers = async (req, res) => {
     try {
@@ -16,16 +17,22 @@ exports.getUserByIdentifier = async (req, res) => {
     try {
         const { identifier } = req.params;
         
+        if (!identifier) {
+            return res.status(400).json({ message: 'Identifier is required' });
+        }
+
         // Check if identifier is a valid MongoDB ObjectId (for ID search)
-        const isValidObjectId = identifier.match(/^[0-9a-fA-F]{24}$/);
+        const isValidObjectId = mongoose.Types.ObjectId.isValid(identifier);
         
         let query;
         if (isValidObjectId) {
             query = { _id: identifier };
-        } else if (identifier.includes('@')) {
-            query = { email: identifier };
+        } else if (identifier.includes('@') && identifier.includes('.')) {
+            query = { email: identifier.toLowerCase() };
         } else {
-            return res.status(400).json({ message: 'Invalid identifier. Must be an ID or email.' });
+            return res.status(400).json({ 
+                message: 'Invalid identifier format. Must be a valid ID or email address.' 
+            });
         }
 
         const user = await User.findOne(query);
@@ -36,6 +43,7 @@ exports.getUserByIdentifier = async (req, res) => {
 
         res.json(user);
     } catch (error) {
+        console.error('Error in getUserByIdentifier:', error);
         res.status(500).json({ message: 'Error finding user' });
     }
 };
@@ -43,20 +51,47 @@ exports.getUserByIdentifier = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
     try {
-        const user = await User.findByIdAndUpdate(
-            req.params.id, 
-            req.body,
-            { new: true }
+        const { id } = req.params;
+        const updates = req.body;
+
+        if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'Valid user ID is required' });
+        }
+
+        // Only allow updates to profile fields
+        const allowedUpdates = {
+            'profile.first_name': updates.profile?.first_name,
+            'profile.last_name': updates.profile?.last_name,
+            'profile.bio': updates.profile?.bio,
+            'profile.profile_picture': updates.profile?.profile_picture,
+            email: updates.email
+        };
+
+        // Remove undefined values
+        Object.keys(allowedUpdates).forEach(key => 
+            allowedUpdates[key] === undefined && delete allowedUpdates[key]
         );
+
+        const user = await User.findByIdAndUpdate(
+            id,
+            { $set: allowedUpdates },
+            { new: true, runValidators: true }
+        );
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
         res.json(user);
     } catch (error) {
+        console.error('Error in updateUser:', error);
         res.status(500).json({ message: 'Error updating user' });
     }
 };
 
 exports.deleteUser = async (req, res) => {
     try {
-        const userId = req.params.id;
+        const userId = req.body.id;
 
         // Start a session for transaction
         const session = await mongoose.startSession();
@@ -138,4 +173,46 @@ exports.deleteUser = async (req, res) => {
             message: error.message || 'Error deleting user and related data'
         });
     }
-}; 
+};
+
+exports.registerTeacher = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        // Check if user already exists
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(400).json({ message: 'Email already exists' });
+        }
+
+        // Create new teacher account
+        const teacher = new User({
+            email,
+            password,
+            role: 'teacher',
+            profile: {
+                first_name: 'Pending',
+                last_name: 'Setup'
+            }
+        });
+
+        await teacher.save();
+
+        res.status(201).json({
+            message: 'Teacher registered successfully',
+            teacher: {
+                id: teacher._id,
+                email: teacher.email,
+                role: teacher.role
+            }
+        });
+
+    } catch (error) {
+        console.error('Error in registerTeacher:', error);
+        res.status(500).json({ 
+            message: 'Error registering teacher',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+};
+

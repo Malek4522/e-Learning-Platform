@@ -13,7 +13,11 @@ const bcrypt = require('bcryptjs');
 
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
-    { id: user._id, role: user.role },
+    { 
+      id: user._id, 
+      role: user.role,
+      email: user.email 
+    },
     secret,
     { expiresIn }
   );
@@ -25,6 +29,60 @@ const generateTokens = (user) => {
   );
 
   return { accessToken, refreshToken };
+};
+
+const authenticateAdmin = async (email, password) => {
+  const admin = await Admin.findOne({ email }).select('+password');
+  if (!admin) return null;
+
+  const isMatch = await admin.comparePassword(password);
+  if (!isMatch) return null;
+
+  const { accessToken, refreshToken } = generateTokens({
+    _id: admin._id,
+    role: admin.role,
+    email: admin.email
+  });
+  
+  // Save refresh token
+  await admin.addRefreshToken(refreshToken, refreshExpiresIn);
+
+  return {
+    accessToken,
+    refreshToken,
+    admin: {
+      id: admin._id,
+      email: admin.email,
+      role: admin.role
+    }
+  };
+};
+
+const authenticateUser = async (email, password) => {
+  const user = await User.findOne({ email }).select('+password');
+  if (!user) return null;
+
+  const isMatch = await user.comparePassword(password);
+  if (!isMatch) return null;
+
+  const { accessToken, refreshToken } = generateTokens({
+    _id: user._id,
+    role: user.role,
+    email: user.email
+  });
+  
+  // Save refresh token
+  await user.addRefreshToken(refreshToken, refreshExpiresIn);
+
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: user._id,
+      email: user.email,
+      role: user.role
+    }
+  };
 };
 
 const authController = {
@@ -39,14 +97,10 @@ const authController = {
         return res.status(400).json({ message: 'Email already exists' });
       }
 
-      // Hash password
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(password, salt);
-
       // Create new user
       const user = new User({
         email,
-        password: hashedPassword,
+        password,
         role: 'student'
       });
 
@@ -59,107 +113,34 @@ const authController = {
     }
   },
 
-  // Register new teacher (admin only)
-  registerTeacher: async (req, res) => {
-    try {
-      const { email, password, profile } = req.body;
-
-      const existingUser = await User.findOne({ email });
-      if (existingUser) {
-        return res.status(400).json({ 
-          message: 'Email already exists' 
-        });
-      }
-
-      const teacher = new User({
-        email,
-        password,
-        role: 'teacher',
-        profile
-      });
-
-      await teacher.save();
-
-      res.status(201).json({
-        message: 'Teacher registered successfully',
-        teacher: {
-          id: teacher._id,
-          email: teacher.email,
-          role: teacher.role,
-          profile: teacher.profile
-        }
-      });
-    } catch (error) {
-      res.status(500).json({ message: error.message });
-    }
-  },
-
-  // Login
+  // Login - simplified since validation is handled by middleware
   login: async (req, res) => {
     try {
       const { email, password } = req.body;
 
-      // First try to find admin
-      const admin = await Admin.findOne({ email }).select('+password');
-      if (admin) {
-        const isMatch = await admin.comparePassword(password);
-        if (!isMatch) {
-          return res.status(401).json({ message: 'Invalid credentials' });
-        }
-
-        const { accessToken, refreshToken } = generateTokens({
-          id: admin._id,
-          role: admin.role,
-          isAdmin: true
-        });
-
-        res.json({
-          accessToken,
-          refreshToken,
-          user: {
-            id: admin._id,
-            email: admin.email,
-            role: admin.role,
-            isAdmin: true
-          }
-        });
-        return;
+      // Try admin authentication first
+      const adminAuth = await authenticateAdmin(email, password);
+      if (adminAuth) {
+        return res.json(adminAuth);
       }
 
-      // If not admin, try regular user
-      const user = await User.findOne({ email }).select('+password');
-      if (!user) {
-        return res.status(401).json({ message: 'Invalid credentials' });
+      // Try user authentication
+      const userAuth = await authenticateUser(email, password);
+      if (userAuth) {
+        return res.json(userAuth);
       }
 
-      const isMatch = await user.comparePassword(password);
-      if (!isMatch) {
-        return res.status(401).json({ message: 'Invalid credentials' });
-      }
-
-      const { accessToken, refreshToken } = generateTokens(user);
-      
-      // Save refresh token
-      await user.addRefreshToken(refreshToken, refreshExpiresIn);
-
-      res.json({
-        accessToken,
-        refreshToken,
-        user: {
-          id: user._id,
-          email: user.email,
-          role: user.role
-        }
-      });
+      return res.status(401).json({ message: 'Invalid credentials' });
     } catch (error) {
       res.status(500).json({ message: error.message });
     }
   },
 
-  // Forgot Password
+  // Forgot Password - simplified
   forgotPassword: async (req, res) => {
     try {
-      const user = await User.findOne({ email: req.body.email });
+      const { email } = req.body;
+      const user = await User.findOne({ email });
       if (!user) {
         return res.status(404).json({ message: 'User not found' });
       }
@@ -175,12 +156,15 @@ const authController = {
     }
   },
 
-  // Reset Password
+  // Reset Password - simplified
   resetPassword: async (req, res) => {
     try {
+      const { token } = req.params;
+      const { password } = req.body;
+
       const hashedToken = crypto
         .createHash('sha256')
-        .update(req.params.token)
+        .update(token)
         .digest('hex');
 
       const user = await User.findOne({
@@ -189,12 +173,10 @@ const authController = {
       });
 
       if (!user) {
-        return res.status(400).json({ 
-          message: 'Invalid or expired reset token' 
-        });
+        return res.status(400).json({ message: 'Invalid or expired reset token' });
       }
 
-      user.password = req.body.password;
+      user.password = password;
       user.clearPasswordResetToken();
       await user.save();
 
@@ -204,59 +186,63 @@ const authController = {
     }
   },
 
-  // Get current user
-  getCurrentUser: async (req, res) => {
+  // Refresh token - simplified
+  refresh: async (req, res) => {
     try {
-      const user = await User.findById(req.user.id)
-        .select('-password -resetPasswordToken -resetPasswordExpires -refreshTokens');
-      res.json(user);
+      const { refreshToken } = req.body;
+      
+      const id = req.admin ? req.admin.id : req.user.id;
+
+      let entity;
+      if (req.admin) {
+        entity = await Admin.findOne({
+          _id: id,
+          'refreshTokens.token': refreshToken,
+          'refreshTokens.expiresAt': { $gt: new Date() }
+        });
+      } else {
+        entity = await User.findOne({
+          _id: id,
+          'refreshTokens.token': refreshToken,
+          'refreshTokens.expiresAt': { $gt: new Date() }
+        });
+      }
+
+      if (!entity) {
+        return res.status(401).json({ message: 'Invalid refresh token' });
+      }
+
+      const tokens = generateTokens(entity);
+      
+      await entity.removeRefreshToken(refreshToken);
+      await entity.addRefreshToken(tokens.refreshToken, refreshExpiresIn);
+
+      res.json({
+        ...tokens,
+        [entity instanceof Admin ? 'admin' : 'user']: {
+          id: entity._id,
+          email: entity.email,
+          role: entity.role
+        }
+      });
     } catch (error) {
       res.status(500).json({ message: error.message });
     }
   },
 
-  // Add refresh token endpoint
-  refresh: async (req, res) => {
+  // Get current user
+  getCurrentUser: async (req, res) => {
     try {
-      const { refreshToken } = req.body;
-      
-      if (!refreshToken) {
-        return res.status(400).json({ message: 'Refresh token is required' });
+      let entity;
+      if (req.admin) {
+        entity = await Admin.findById(req.admin.id)
+          .select('-password -resetPasswordToken -resetPasswordExpires -refreshTokens');
+      } else {
+        entity = await User.findById(req.user.id)
+          .select('-password -resetPasswordToken -resetPasswordExpires -refreshTokens');
       }
-
-      // Verify refresh token
-      const decoded = jwt.verify(refreshToken, refreshSecret);
-      
-      // Find user and check if refresh token exists
-      const user = await User.findOne({
-        _id: decoded.id,
-        'refreshTokens.token': refreshToken,
-        'refreshTokens.expiresAt': { $gt: new Date() }
-      });
-
-      if (!user) {
-        return res.status(401).json({ message: 'Invalid refresh token' });
-      }
-
-      // Generate new tokens
-      const tokens = generateTokens(user);
-      
-      // Replace old refresh token
-      await user.removeRefreshToken(refreshToken);
-      await user.addRefreshToken(tokens.refreshToken, refreshExpiresIn);
-
-      res.json({
-        ...tokens,
-        user: {
-          id: user._id,
-          email: user.email,
-          role: user.role
-        }
-      });
+      res.json(entity);
     } catch (error) {
-      if (error.name === 'JsonWebTokenError') {
-        return res.status(401).json({ message: 'Invalid refresh token' });
-      }
       res.status(500).json({ message: error.message });
     }
   },
@@ -270,13 +256,22 @@ const authController = {
         return res.status(400).json({ message: 'Refresh token is required' });
       }
 
-      // Find user and remove refresh token
+      // Try to find and remove refresh token from user
       const user = await User.findOne({
         'refreshTokens.token': refreshToken
       });
 
       if (user) {
         await user.removeRefreshToken(refreshToken);
+      } else {
+        // If not found in users, try admins
+        const admin = await Admin.findOne({
+          'refreshTokens.token': refreshToken
+        });
+        
+        if (admin) {
+          await admin.removeRefreshToken(refreshToken);
+        }
       }
 
       res.json({ message: 'Logged out successfully' });

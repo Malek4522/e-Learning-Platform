@@ -1,17 +1,19 @@
 const express = require('express');
 const router = express.Router();
-const { 
-    getUsers,
-    updateUser,
-    deleteUser 
-} = require('../controllers/admin.controller');
-const adminMiddleware = require('../middleware/admin.middleware');
+const adminController = require('../controllers/admin.controller');
+const authMiddleware = require('../middleware/auth.middleware');
+const { validateRegistration } = require('../middleware/validation.middleware');
 
-// Apply admin middleware to all routes
-router.use(adminMiddleware);
+// Apply auth and admin middleware to all routes
+router.use(authMiddleware);
 
-router.get('/users', getUsers);
-router.put('/users/:id', updateUser);
-router.delete('/users/:id', deleteUser);
+// User management
+router.get('/users', adminController.getUsers);
+router.get('/users/:identifier', adminController.getUserByIdentifier);
+router.put('/users/:id', adminController.updateUser);
+router.delete('/user/', adminController.deleteUser);
+
+// Teacher management
+router.post('/teachers', validateRegistration, adminController.registerTeacher);
 
 module.exports = router; 
