@@ -24,11 +24,7 @@ const validations = {
     if (isRegistration) {
       chain
         .isLength({ min: 6 })
-        .withMessage('Password must be at least 6 characters long')
-        .matches(/\d/)
-        .withMessage('Password must contain at least one number')
-        .matches(/[!@#$%^&*(),.?":{}|<>]/)
-        .withMessage('Password must contain at least one special character');
+        .withMessage('Password must be at least 6 characters long');
     }
 
     return chain;
