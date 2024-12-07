@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Register</title>
+    <title>Login</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -26,9 +26,6 @@
             border: none;
             cursor: pointer;
         }
-        button:hover {
-            background-color: #0056b3;
-        }
         #response {
             margin-top: 20px;
             padding: 10px;
@@ -43,8 +40,8 @@
     </style>
 </head>
 <body>
-    <h2>Register</h2>
-    <form id="registerForm">
+    <h2>Login</h2>
+    <form id="loginForm">
         <div class="form-group">
             <label for="email">Email:</label>
             <input type="email" id="email" required>
@@ -53,13 +50,13 @@
             <label for="password">Password:</label>
             <input type="password" id="password" required>
         </div>
-        <button type="submit">Register</button>
+        <button type="submit">Login</button>
     </form>
     <div id="response"></div>
-    <p>Already have an account? <a href="/login.html">Login here</a></p>
+    <p>Don't have an account? <a href="/register.html">Register here</a></p>
 
     <script>
-        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
             const userData = {
@@ -68,7 +65,7 @@
             };
 
             try {
-                const response = await fetch('/api/auth/register', {
+                const response = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -92,9 +89,9 @@
                 
                 if (response.ok) {
                     responseDiv.style.backgroundColor = '#d4edda';
-                    setTimeout(() => {
-                        window.location.href = '/login.html';
-                    }, 3000);
+                    if (data.token) {
+                        localStorage.setItem('token', data.token);
+                    }
                 } else {
                     responseDiv.style.backgroundColor = '#f8d7da';
                 }

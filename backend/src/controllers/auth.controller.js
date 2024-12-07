@@ -1,4 +1,4 @@
-const jwt = require('jsonwebtoken');
+const { sign } = require('jsonwebtoken');
 const User = require('../models/User');
 const { sendResetPasswordEmail } = require('../services/email.service');
 const { 
@@ -12,7 +12,7 @@ const Admin = require('../models/Admin');
 const bcrypt = require('bcryptjs');
 
 const generateTokens = (user) => {
-  const accessToken = jwt.sign(
+  const accessToken = sign(
     { 
       id: user._id, 
       role: user.role,
@@ -22,7 +22,7 @@ const generateTokens = (user) => {
     { expiresIn }
   );
 
-  const refreshToken = jwt.sign(
+  const refreshToken = sign(
     { id: user._id },
     refreshSecret,
     { expiresIn: refreshExpiresIn }
