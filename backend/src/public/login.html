@@ -26,86 +26,132 @@
             border: none;
             cursor: pointer;
         }
-        #response {
-            margin-top: 20px;
+        .error-message {
+            color: #721c24;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
             padding: 10px;
-            border: 1px solid #ccc;
+            margin: 10px 0;
+            border-radius: 4px;
             display: none;
-            white-space: pre-wrap;
-            font-family: monospace;
-            background-color: #f8f9fa;
-            max-height: 300px;
-            overflow-y: auto;
         }
     </style>
 </head>
 <body>
     <h2>Login</h2>
+    <div id="errorMessage" class="error-message"></div>
     <form id="loginForm">
         <div class="form-group">
             <label for="email">Email:</label>
-            <input type="email" id="email" required>
+            <input type="email" id="email" required autocomplete="email">
         </div>
         <div class="form-group">
             <label for="password">Password:</label>
-            <input type="password" id="password" required>
+            <input type="password" id="password" required autocomplete="current-password">
         </div>
         <button type="submit">Login</button>
     </form>
-    <div id="response"></div>
     <p>Don't have an account? <a href="/register.html">Register here</a></p>
 
     <script>
+        // Security measure: Clear any existing tokens on page load
+        window.addEventListener('load', () => {
+            sessionStorage.removeItem('accessToken');
+            document.getElementById('errorMessage').style.display = 'none';
+        });
+
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
-            const userData = {
-                email: document.getElementById('email').value,
-                password: document.getElementById('password').value
-            };
+            const errorMessage = document.getElementById('errorMessage');
+            errorMessage.style.display = 'none';
 
             try {
                 const response = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest' // CSRF protection
                     },
-                    body: JSON.stringify(userData)
+                    credentials: 'include', // Important for cookies
+                    body: JSON.stringify({
+                        email: document.getElementById('email').value,
+                        password: document.getElementById('password').value
+                    })
                 });
 
                 const data = await response.json();
-                const responseDiv = document.getElementById('response');
-                responseDiv.style.display = 'block';
-                
-                // Display complete response information
-                const responseDetails = {
-                    status: response.status,
-                    statusText: response.statusText,
-                    headers: Object.fromEntries(response.headers.entries()),
-                    data: data
-                };
 
-                responseDiv.textContent = JSON.stringify(responseDetails, null, 2);
-                
-                if (response.ok) {
-                    responseDiv.style.backgroundColor = '#d4edda';
-                    if (data.token) {
-                        localStorage.setItem('token', data.token);
+                if (!response.ok) {
+                    throw new Error(data.message || 'Login failed');
+                }
+
+                if (data.token) {
+                    // Store access token in sessionStorage (cleared when tab closes)
+                    sessionStorage.setItem('accessToken', data.token);
+                    
+                    // Store refresh token if provided
+                    if (data.refreshToken) {
+                        // Store refresh token in httpOnly cookie (handled by server)
+                        // The cookie will be automatically included in requests
                     }
+                    
+                    // Store token expiration time
+                    const expiresIn = data.expiresIn || 3600; // default 1 hour
+                    const expirationTime = Date.now() + (expiresIn * 1000);
+                    sessionStorage.setItem('tokenExpiration', expirationTime);
+                    
+                    // Clear sensitive form data
+                    document.getElementById('loginForm').reset();
+                    
+                    // Redirect to profile page
+                    window.location.href = '/me.html';
                 } else {
-                    responseDiv.style.backgroundColor = '#f8d7da';
+                    throw new Error('No token received');
                 }
             } catch (error) {
-                console.error('Error:', error);
-                const responseDiv = document.getElementById('response');
-                responseDiv.style.display = 'block';
-                responseDiv.style.backgroundColor = '#f8d7da';
-                responseDiv.textContent = JSON.stringify({
-                    error: error.message,
-                    stack: error.stack
-                }, null, 2);
+                errorMessage.textContent = error.message || 'An error occurred during login';
+                errorMessage.style.display = 'block';
+                console.error('Login error:', error);
             }
         });
+
+        // Security measure: Clear tokens when window/tab closes
+        window.addEventListener('unload', () => {
+            sessionStorage.clear(); // Clear all session data
+        });
+
+        // Security measure: Clear tokens when user navigates away
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                sessionStorage.clear(); // Clear all session data
+            }
+        });
+
+        // Add token refresh mechanism
+        function refreshAccessToken() {
+            return fetch('/api/auth/refresh', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                credentials: 'include' // Important for sending the httpOnly refresh token cookie
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.token) {
+                    sessionStorage.setItem('accessToken', data.token);
+                    const expiresIn = data.expiresIn || 3600;
+                    const expirationTime = Date.now() + (expiresIn * 1000);
+                    sessionStorage.setItem('tokenExpiration', expirationTime);
+                }
+            })
+            .catch(() => {
+                // If refresh fails, redirect to login
+                window.location.href = '/login.html';
+            });
+        }
     </script>
 </body>
 </html> 
