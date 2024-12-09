@@ -1,4 +1,6 @@
-const { body, param, validationResult } = require('express-validator');
+const { body, param, cookie, validationResult } = require('express-validator');
+const jwt = require('jsonwebtoken');
+const { refreshSecret, options } = require('../config/jwt.config');
 
 // Validation chains
 const validations = {
@@ -39,16 +41,30 @@ const validations = {
     .matches(/^[a-fA-F0-9]+$/)
     .escape(),
 
-  // Refresh token validation
-  refreshToken: body('refreshToken')
+  // Refresh token validation from cookie
+  refreshTokenCookie: cookie('refreshToken')
     .trim()
     .notEmpty()
     .withMessage('Refresh token is required')
     .isJWT()
     .withMessage('Invalid refresh token format')
-    .isLength({ max: 1000 })
-    .matches(/^[A-Za-z0-9-_\.]+$/)
-    .escape()
+    .custom(async (value, { req }) => {
+      try {
+        // Verify the token structure and signature
+        const decoded = jwt.verify(value, refreshSecret, options);
+        
+        // Check if token has required fields
+        if (!decoded.id || !decoded.version || !decoded.jti || !decoded.sub) {
+          throw new Error('Invalid token structure');
+        }
+
+        // Store decoded token for later use
+        req.decodedRefreshToken = decoded;
+        return true;
+      } catch (error) {
+        throw new Error('Invalid refresh token');
+      }
+    })
 };
 
 // Validation result handler
@@ -90,9 +106,9 @@ const validateForgotPassword = [
   handleValidation
 ];
 
-// Add refresh validation middleware
+// Update refresh validation middleware to use cookie
 const validateRefresh = [
-  validations.refreshToken,
+  validations.refreshTokenCookie,
   handleValidation
 ];
 

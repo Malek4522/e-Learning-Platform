@@ -63,9 +63,16 @@ const userSchema = new mongoose.Schema({
   },
   resetPasswordToken: String,
   resetPasswordExpires: Date,
+  tokenVersion: {
+    type: Number,
+    default: 0
+  },
   refreshTokens: [{
     token: String,
-    expiresAt: Date
+    expiresAt: Date,
+    userAgent: String,
+    ip: String,
+    lastUsed: Date
   }]
 }, {
   timestamps: { 
@@ -129,8 +136,8 @@ userSchema.methods.clearPasswordResetToken = function() {
   this.resetPasswordExpires = undefined;
 };
 
-// Add method to save refresh token
-userSchema.methods.addRefreshToken = function(refreshToken, expiresIn) {
+// Add method to save refresh token with metadata
+userSchema.methods.addRefreshToken = function(refreshToken, expiresIn, metadata = {}) {
   const expiresAt = new Date(Date.now() + ms(expiresIn));
   
   // Remove expired tokens
@@ -138,19 +145,46 @@ userSchema.methods.addRefreshToken = function(refreshToken, expiresIn) {
     token.expiresAt > new Date()
   );
   
+  // Limit number of active refresh tokens per user (e.g., max 5 devices)
+  const MAX_REFRESH_TOKENS = 5;
+  if (this.refreshTokens.length >= MAX_REFRESH_TOKENS) {
+    // Remove the oldest token
+    this.refreshTokens.sort((a, b) => a.lastUsed - b.lastUsed);
+    this.refreshTokens.shift();
+  }
+  
   this.refreshTokens.push({
     token: refreshToken,
-    expiresAt
+    expiresAt,
+    userAgent: metadata.userAgent,
+    ip: metadata.ip,
+    lastUsed: new Date()
   });
   
   return this.save();
 };
 
-// Add method to remove refresh token
+// Update method to remove refresh token
 userSchema.methods.removeRefreshToken = function(refreshToken) {
   this.refreshTokens = this.refreshTokens.filter(token => 
     token.token !== refreshToken
   );
+  return this.save();
+};
+
+// Add method to increment token version (for invalidating all refresh tokens)
+userSchema.methods.incrementTokenVersion = function() {
+  this.tokenVersion = (this.tokenVersion || 0) + 1;
+  this.refreshTokens = []; // Clear all refresh tokens
+  return this.save();
+};
+
+// Add method to update refresh token last used timestamp
+userSchema.methods.updateRefreshTokenUsage = function(refreshToken) {
+  const tokenDoc = this.refreshTokens.find(t => t.token === refreshToken);
+  if (tokenDoc) {
+    tokenDoc.lastUsed = new Date();
+  }
   return this.save();
 };
 

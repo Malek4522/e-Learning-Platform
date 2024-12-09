@@ -5,13 +5,18 @@ const {
   secret, 
   expiresIn, 
   refreshSecret, 
-  refreshExpiresIn 
+  refreshExpiresIn,
+  options,
+  cookie 
 } = require('../config/jwt.config');
 const crypto = require('crypto');
 const Admin = require('../models/Admin');
 const bcrypt = require('bcryptjs');
 
 const generateTokens = (user) => {
+  // Generate a unique JWT ID
+  const jwtid = crypto.randomBytes(16).toString('hex');
+  
   const accessToken = sign(
     { 
       id: user._id, 
@@ -19,16 +24,43 @@ const generateTokens = (user) => {
       email: user.email 
     },
     secret,
-    { expiresIn }
+    {
+      ...options,
+      expiresIn,
+      jwtid,
+      subject: user._id.toString()
+    }
   );
 
   const refreshToken = sign(
-    { id: user._id },
+    { 
+      id: user._id,
+      version: user.tokenVersion || 0 // For token invalidation
+    },
     refreshSecret,
-    { expiresIn: refreshExpiresIn }
+    {
+      ...options,
+      expiresIn: refreshExpiresIn,
+      jwtid: crypto.randomBytes(16).toString('hex'),
+      subject: user._id.toString()
+    }
   );
 
   return { accessToken, refreshToken };
+};
+
+const setRefreshTokenCookie = (res, refreshToken) => {
+  res.cookie('refreshToken', refreshToken, {
+    ...cookie,
+    path: '/api/auth/refresh' // Restrict cookie to refresh endpoint
+  });
+};
+
+const clearRefreshTokenCookie = (res) => {
+  res.clearCookie('refreshToken', {
+    ...cookie,
+    path: '/api/auth/refresh'
+  });
 };
 
 const authenticateAdmin = async (email, password) => {
@@ -68,11 +100,15 @@ const authenticateUser = async (email, password) => {
   const { accessToken, refreshToken } = generateTokens({
     _id: user._id,
     role: user.role,
-    email: user.email
+    email: user.email,
+    tokenVersion: user.tokenVersion
   });
   
-  // Save refresh token
-  await user.addRefreshToken(refreshToken, refreshExpiresIn);
+  // Save refresh token with additional security metadata
+  await user.addRefreshToken(refreshToken, refreshExpiresIn, {
+    userAgent: req.headers['user-agent'],
+    ip: req.ip
+  });
 
   return {
     accessToken,
@@ -121,13 +157,21 @@ const authController = {
       // Try admin authentication first
       const adminAuth = await authenticateAdmin(email, password);
       if (adminAuth) {
-        return res.json(adminAuth);
+        setRefreshTokenCookie(res, adminAuth.refreshToken);
+        return res.json({
+          accessToken: adminAuth.accessToken,
+          admin: adminAuth.admin
+        });
       }
 
       // Try user authentication
       const userAuth = await authenticateUser(email, password);
       if (userAuth) {
-        return res.json(userAuth);
+        setRefreshTokenCookie(res, userAuth.refreshToken);
+        return res.json({
+          accessToken: userAuth.accessToken,
+          user: userAuth.user
+        });
       }
 
       return res.status(401).json({ message: 'Invalid credentials' });
@@ -189,8 +233,12 @@ const authController = {
   // Refresh token - simplified
   refresh: async (req, res) => {
     try {
-      const { refreshToken } = req.body;
+      const refreshToken = req.cookies.refreshToken;
       
+      if (!refreshToken) {
+        return res.status(401).json({ message: 'Refresh token required' });
+      }
+
       const id = req.admin ? req.admin.id : req.user.id;
 
       let entity;
@@ -209,16 +257,24 @@ const authController = {
       }
 
       if (!entity) {
+        clearRefreshTokenCookie(res);
         return res.status(401).json({ message: 'Invalid refresh token' });
       }
 
       const tokens = generateTokens(entity);
       
+      // Remove old refresh token and add new one
       await entity.removeRefreshToken(refreshToken);
-      await entity.addRefreshToken(tokens.refreshToken, refreshExpiresIn);
+      await entity.addRefreshToken(tokens.refreshToken, refreshExpiresIn, {
+        userAgent: req.headers['user-agent'],
+        ip: req.ip
+      });
+
+      // Set new refresh token cookie
+      setRefreshTokenCookie(res, tokens.refreshToken);
 
       res.json({
-        ...tokens,
+        accessToken: tokens.accessToken,
         [entity instanceof Admin ? 'admin' : 'user']: {
           id: entity._id,
           email: entity.email,
@@ -226,6 +282,7 @@ const authController = {
         }
       });
     } catch (error) {
+      clearRefreshTokenCookie(res);
       res.status(500).json({ message: error.message });
     }
   },
@@ -250,30 +307,29 @@ const authController = {
   // Add logout endpoint
   logout: async (req, res) => {
     try {
-      const { refreshToken } = req.body;
+      const refreshToken = req.cookies.refreshToken;
       
-      if (!refreshToken) {
-        return res.status(400).json({ message: 'Refresh token is required' });
-      }
-
-      // Try to find and remove refresh token from user
-      const user = await User.findOne({
-        'refreshTokens.token': refreshToken
-      });
-
-      if (user) {
-        await user.removeRefreshToken(refreshToken);
-      } else {
-        // If not found in users, try admins
-        const admin = await Admin.findOne({
+      if (refreshToken) {
+        // Try to find and remove refresh token from user
+        const user = await User.findOne({
           'refreshTokens.token': refreshToken
         });
-        
-        if (admin) {
-          await admin.removeRefreshToken(refreshToken);
+
+        if (user) {
+          await user.removeRefreshToken(refreshToken);
+        } else {
+          // If not found in users, try admins
+          const admin = await Admin.findOne({
+            'refreshTokens.token': refreshToken
+          });
+          
+          if (admin) {
+            await admin.removeRefreshToken(refreshToken);
+          }
         }
       }
 
+      clearRefreshTokenCookie(res);
       res.json({ message: 'Logged out successfully' });
     } catch (error) {
       res.status(500).json({ message: error.message });
