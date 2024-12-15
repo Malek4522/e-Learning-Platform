@@ -5,6 +5,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const connectDB = require('./config/database');
 const routes = require('./routes/index');
+const cookieParser = require('cookie-parser');
 
 // Connect to Database
 connectDB();
@@ -16,6 +17,7 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static('src/public'));
+app.use(cookieParser());
 
 // Routes
 app.use('/api', routes);

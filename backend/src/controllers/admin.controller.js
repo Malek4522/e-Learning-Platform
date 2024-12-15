@@ -200,7 +200,7 @@ exports.registerTeacher = async (req, res) => {
 
         res.status(201).json({
             message: 'Teacher registered successfully',
-            teacher: {
+            user: {
                 id: teacher._id,
                 email: teacher.email,
                 role: teacher.role

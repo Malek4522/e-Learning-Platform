@@ -53,13 +53,19 @@ const validations = {
         // Verify the token structure and signature
         const decoded = jwt.verify(value, refreshSecret, options);
         
-        // Check if token has required fields
-        if (!decoded.id || !decoded.version || !decoded.jti || !decoded.sub) {
+        // Check if token has required fields based on our token generation
+        if (!decoded.id || !decoded.version === undefined) {
           throw new Error('Invalid token structure');
         }
-
-        // Store decoded token for later use
-        req.decodedRefreshToken = decoded;
+        
+        // Check if the decoded token corresponds to a user or admin
+        const adminRoles = ['superadmin', 'contentmanager', 'moderator']; // Define valid admin roles
+        if (adminRoles.includes(decoded.role)) {
+          req.admin = decoded; // Store admin info
+        } else {
+          req.user = decoded; // Store user info
+        }
+        
         return true;
       } catch (error) {
         throw new Error('Invalid refresh token');

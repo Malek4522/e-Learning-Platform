@@ -14,7 +14,7 @@ const router = express.Router();
 // Authentication routes
 router.post('/register', validateRegistration, authController.register);
 router.post('/login', validateLogin, authController.login);
-router.post('/logout', authMiddleware, authController.logout);
+router.post('/logout', validateRefresh, authController.logout);
 
 // Password management
 router.post('/forgot-password', validateForgotPassword, authController.forgotPassword);

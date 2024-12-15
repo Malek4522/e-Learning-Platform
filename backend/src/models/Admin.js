@@ -19,6 +19,10 @@ const adminSchema = new mongoose.Schema({
     lowercase: true,
     match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
   },
+  isEmailVerified: {
+    type: Boolean,
+    default: true
+  },
   role: {
     type: String,
     required: true,

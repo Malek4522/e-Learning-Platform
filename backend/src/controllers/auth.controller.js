@@ -1,4 +1,4 @@
-const { sign } = require('jsonwebtoken');
+const { sign, verify } = require('jsonwebtoken');
 const User = require('../models/User');
 const { sendResetPasswordEmail } = require('../services/email.service');
 const { 
@@ -35,7 +35,9 @@ const generateTokens = (user) => {
   const refreshToken = sign(
     { 
       id: user._id,
-      version: user.tokenVersion || 0 // For token invalidation
+      role: user.role,
+      email: user.email,
+      version: user.tokenVersion || 0, // For token invalidation
     },
     refreshSecret,
     {
@@ -50,9 +52,16 @@ const generateTokens = (user) => {
 };
 
 const setRefreshTokenCookie = (res, refreshToken) => {
+  // Set cookie for /api/auth/refresh
   res.cookie('refreshToken', refreshToken, {
     ...cookie,
     path: '/api/auth/refresh' // Restrict cookie to refresh endpoint
+  });
+
+  // Set cookie for /api/auth/logout
+  res.cookie('refreshToken', refreshToken, {
+    ...cookie,
+    path: '/api/auth/logout' // Restrict cookie to logout endpoint
   });
 };
 
@@ -61,9 +70,14 @@ const clearRefreshTokenCookie = (res) => {
     ...cookie,
     path: '/api/auth/refresh'
   });
+
+  res.clearCookie('refreshToken', {
+    ...cookie,
+    path: '/api/auth/logout'
+  });
 };
 
-const authenticateAdmin = async (email, password) => {
+const authenticateAdmin = async (email, password, req) => {
   const admin = await Admin.findOne({ email }).select('+password');
   if (!admin) return null;
 
@@ -76,21 +90,19 @@ const authenticateAdmin = async (email, password) => {
     email: admin.email
   });
   
-  // Save refresh token
-  await admin.addRefreshToken(refreshToken, refreshExpiresIn);
+  // Save refresh token with security metadata (matching authenticateUser)
+  await admin.addRefreshToken(refreshToken, refreshExpiresIn, {
+    userAgent: req.headers['user-agent'],
+    ip: req.ip
+  });
 
   return {
     accessToken,
     refreshToken,
-    admin: {
-      id: admin._id,
-      email: admin.email,
-      role: admin.role
-    }
   };
 };
 
-const authenticateUser = async (email, password) => {
+const authenticateUser = async (email, password, req) => {
   const user = await User.findOne({ email }).select('+password');
   if (!user) return null;
 
@@ -113,11 +125,6 @@ const authenticateUser = async (email, password) => {
   return {
     accessToken,
     refreshToken,
-    user: {
-      id: user._id,
-      email: user.email,
-      role: user.role
-    }
   };
 };
 
@@ -154,23 +161,21 @@ const authController = {
     try {
       const { email, password } = req.body;
 
-      // Try admin authentication first
-      const adminAuth = await authenticateAdmin(email, password);
+      // Try admin authentication first - pass req object
+      const adminAuth = await authenticateAdmin(email, password, req);
       if (adminAuth) {
         setRefreshTokenCookie(res, adminAuth.refreshToken);
         return res.json({
           accessToken: adminAuth.accessToken,
-          admin: adminAuth.admin
         });
       }
 
       // Try user authentication
-      const userAuth = await authenticateUser(email, password);
+      const userAuth = await authenticateUser(email, password, req);
       if (userAuth) {
         setRefreshTokenCookie(res, userAuth.refreshToken);
         return res.json({
           accessToken: userAuth.accessToken,
-          user: userAuth.user
         });
       }
 
@@ -233,57 +238,51 @@ const authController = {
   // Refresh token - simplified
   refresh: async (req, res) => {
     try {
-      const refreshToken = req.cookies.refreshToken;
-      
-      if (!refreshToken) {
-        return res.status(401).json({ message: 'Refresh token required' });
-      }
+        const { id, email } = req.admin || req.user; // Extract id and email from req
 
-      const id = req.admin ? req.admin.id : req.user.id;
+        const refreshToken = req.cookies['refreshToken'];
+        let entity;
 
-      let entity;
-      if (req.admin) {
-        entity = await Admin.findOne({
-          _id: id,
-          'refreshTokens.token': refreshToken,
-          'refreshTokens.expiresAt': { $gt: new Date() }
-        });
-      } else {
-        entity = await User.findOne({
-          _id: id,
-          'refreshTokens.token': refreshToken,
-          'refreshTokens.expiresAt': { $gt: new Date() }
-        });
-      }
-
-      if (!entity) {
-        clearRefreshTokenCookie(res);
-        return res.status(401).json({ message: 'Invalid refresh token' });
-      }
-
-      const tokens = generateTokens(entity);
-      
-      // Remove old refresh token and add new one
-      await entity.removeRefreshToken(refreshToken);
-      await entity.addRefreshToken(tokens.refreshToken, refreshExpiresIn, {
-        userAgent: req.headers['user-agent'],
-        ip: req.ip
-      });
-
-      // Set new refresh token cookie
-      setRefreshTokenCookie(res, tokens.refreshToken);
-
-      res.json({
-        accessToken: tokens.accessToken,
-        [entity instanceof Admin ? 'admin' : 'user']: {
-          id: entity._id,
-          email: entity.email,
-          role: entity.role
+        // Determine if the request is from an admin or user based on req.admin or req.user
+        if (req.admin) {
+            entity = await Admin.findOne({
+                _id: id,
+                'refreshTokens.token': refreshToken,
+                'refreshTokens.expiresAt': { $gt: new Date() }
+            });
+        } else if (req.user) {
+            entity = await User.findOne({
+                _id: id,
+                'refreshTokens.token': refreshToken,
+                'refreshTokens.expiresAt': { $gt: new Date() }
+            });
+        } else {
+            return res.status(401).json({ message: 'Invalid refresh token' });
         }
-      });
+
+        if (!entity) {
+            clearRefreshTokenCookie(res);
+            return res.status(401).json({ message: 'Invalid refresh token' });
+        }
+
+        const tokens = generateTokens(entity);
+        
+        // Remove old refresh token and add new one
+        await entity.removeRefreshToken(refreshToken);
+        await entity.addRefreshToken(tokens.refreshToken, refreshExpiresIn, {
+            userAgent: req.headers['user-agent'],
+            ip: req.ip
+        });
+
+        // Set new refresh token cookie
+        setRefreshTokenCookie(res, tokens.refreshToken);
+
+        res.json({
+            accessToken: tokens.accessToken,
+        });
     } catch (error) {
-      clearRefreshTokenCookie(res);
-      res.status(500).json({ message: error.message });
+        clearRefreshTokenCookie(res);
+        res.status(500).json({ message: error.message });
     }
   },
 
@@ -306,9 +305,10 @@ const authController = {
 
   // Add logout endpoint
   logout: async (req, res) => {
-    try {
-      const refreshToken = req.cookies.refreshToken;
-      
+    
+    try {     
+      const refreshToken = req.cookies['refreshToken'];  
+
       if (refreshToken) {
         // Try to find and remove refresh token from user
         const user = await User.findOne({
